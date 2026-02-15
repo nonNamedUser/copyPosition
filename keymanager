@@ -1,0 +1,138 @@
+-- KeyManager.lua
+local HttpService = game:GetService("HttpService")
+
+local KeyManager = {}
+KeyManager.__index = KeyManager
+
+local function getRequestFunction()
+    return request or (syn and syn.request) or http_request
+end
+
+function KeyManager.new(config)
+    local self = setmetatable({}, KeyManager)
+
+    self.ApiBase = assert(config.ApiBase, "ApiBase is required")
+    self.Folder = config.Folder or "KeySystem"
+    self.FilePath = self.Folder .. "/key_data.json"
+
+    self.CurrentKey = nil
+    self.LastValid = false
+    self.LastCheck = 0
+
+    self:_ensureFolder()
+    self:_load()
+
+    return self
+end
+
+function KeyManager:_ensureFolder()
+    if not isfolder(self.Folder) then
+        makefolder(self.Folder)
+    end
+end
+
+function KeyManager:_save()
+    self:_ensureFolder()
+    writefile(self.FilePath, HttpService:JSONEncode({
+        key = self.CurrentKey,
+        lastValid = self.LastValid,
+        lastCheck = self.LastCheck
+    }))
+end
+
+function KeyManager:_load()
+    if not isfile(self.FilePath) then
+        self:_save()
+        return
+    end
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(readfile(self.FilePath))
+    end)
+
+    if ok and type(data) == "table" then
+        self.CurrentKey = data.key
+        self.LastValid = data.lastValid == true
+        self.LastCheck = tonumber(data.lastCheck) or 0
+    else
+        self.CurrentKey = nil
+        self.LastValid = false
+        self.LastCheck = 0
+        self:_save()
+    end
+end
+
+function KeyManager:SetKey(key)
+    self.CurrentKey = tostring(key)
+    self:_save()
+end
+
+function KeyManager:GetKey()
+    return self.CurrentKey
+end
+
+function KeyManager:HasSavedData() -- :boolean
+    return self.CurrentKey ~= nil and type(self.CurrentKey) == "string" and #self.CurrentKey >= 30 and #self.CurrentKey <= 40
+end
+
+function KeyManager:CheckIfValid() -- :boolean
+    local req = getRequestFunction()
+    if not req then
+        self.LastValid = false
+        self.LastCheck = os.time()
+        self:_save()
+        return false
+    end
+
+    if not self:HasSavedData() then
+        self.LastValid = false
+        self.LastCheck = os.time()
+        self:_save()
+        return false
+    end
+
+    local response = req({
+        Url = self.ApiBase .. "/api/keys/validate",
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json"
+        },
+        Body = HttpService:JSONEncode({
+            key = self.CurrentKey
+        })
+    })
+
+    if not response or not response.Body then
+        self.LastValid = false
+        self.LastCheck = os.time()
+        self:_save()
+        return false
+    end
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(response.Body)
+    end)
+
+    local valid = false
+    if ok and response.StatusCode == 200 and type(data) == "table" then
+        valid = data.valid == true
+    end
+
+    self.LastValid = valid
+    self.LastCheck = os.time()
+    self:_save()
+
+    return valid
+end
+
+function KeyManager:CheckSavedKeyIfExists() -- :boolean, boolean
+    local hasData = self:HasSavedData()
+    if not hasData then
+        return false, false
+    end
+
+    local isValid = self:CheckIfValid()
+    return true, isValid
+end
+
+return KeyManager
