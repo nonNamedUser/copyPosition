@@ -17,6 +17,7 @@ function KeyManager.new(config)
 
     self.CurrentKey = nil
     self.LastValid = false
+    self.LastIsPremium = false
     self.LastCheck = 0
 
     self:_ensureFolder()
@@ -36,6 +37,7 @@ function KeyManager:_save()
     writefile(self.FilePath, HttpService:JSONEncode({
         key = self.CurrentKey,
         lastValid = self.LastValid,
+        lastIsPremium = self.LastIsPremium,
         lastCheck = self.LastCheck
     }))
 end
@@ -53,10 +55,12 @@ function KeyManager:_load()
     if ok and type(data) == "table" then
         self.CurrentKey = data.key
         self.LastValid = data.lastValid == true
+        self.LastIsPremium = data.lastIsPremium == true
         self.LastCheck = tonumber(data.lastCheck) or 0
     else
         self.CurrentKey = nil
         self.LastValid = false
+        self.LastIsPremium = false
         self.LastCheck = 0
         self:_save()
     end
@@ -71,24 +75,31 @@ function KeyManager:GetKey()
     return self.CurrentKey
 end
 
+function KeyManager:IsPremium()
+    return self.LastIsPremium == true
+end
+
 function KeyManager:HasSavedData() -- :boolean
     return self.CurrentKey ~= nil and type(self.CurrentKey) == "string" and #self.CurrentKey >= 30 and #self.CurrentKey <= 40
 end
 
-function KeyManager:CheckIfValid() -- :boolean
+-- returns: isValid:boolean, isPremium:boolean
+function KeyManager:CheckIfValid()
     local req = getRequestFunction()
     if not req then
         self.LastValid = false
+        self.LastIsPremium = false
         self.LastCheck = os.time()
         self:_save()
-        return false
+        return false, false
     end
 
     if not self:HasSavedData() then
         self.LastValid = false
+        self.LastIsPremium = false
         self.LastCheck = os.time()
         self:_save()
-        return false
+        return false, false
     end
 
     local response = req({
@@ -104,9 +115,10 @@ function KeyManager:CheckIfValid() -- :boolean
 
     if not response or not response.Body then
         self.LastValid = false
+        self.LastIsPremium = false
         self.LastCheck = os.time()
         self:_save()
-        return false
+        return false, false
     end
 
     local ok, data = pcall(function()
@@ -114,25 +126,30 @@ function KeyManager:CheckIfValid() -- :boolean
     end)
 
     local valid = false
+    local premium = false
+
     if ok and response.StatusCode == 200 and type(data) == "table" then
         valid = data.valid == true
+        premium = data.isPremium == true
     end
 
     self.LastValid = valid
+    self.LastIsPremium = premium
     self.LastCheck = os.time()
     self:_save()
 
-    return valid
+    return valid, premium
 end
 
-function KeyManager:CheckSavedKeyIfExists() -- :boolean, boolean
+-- returns: hasData:boolean, isValid:boolean, isPremium:boolean
+function KeyManager:CheckSavedKeyIfExists()
     local hasData = self:HasSavedData()
     if not hasData then
-        return false, false
+        return false, false, false
     end
 
-    local isValid = self:CheckIfValid()
-    return true, isValid
+    local isValid, isPremium = self:CheckIfValid()
+    return true, isValid, isPremium
 end
 
 return KeyManager
